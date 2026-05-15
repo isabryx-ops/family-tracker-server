@@ -49,28 +49,26 @@ io.on("connection", (socket) => {
     }
   });
 
-  // ══════════ WebRTC Signaling ══════════
+  // ══════════ الصوت ══════════
 
-  // الأب يطلب الاستماع — يبعت offer للطفل
-  socket.on("webrtc_offer", ({ code, childId, offer }) => {
-    io.to(childId).emit("webrtc_offer", { from: socket.id, offer });
-    console.log(`offer sent to child: ${childId}`);
-  });
-
-  // الطفل يرد بـ answer
-  socket.on("webrtc_answer", ({ code, parentId, answer }) => {
-    io.to(parentId).emit("webrtc_answer", { answer });
-    console.log(`answer sent to parent: ${parentId}`);
-  });
-
-  // تبادل ICE candidates
-  socket.on("ice_candidate", ({ targetId, candidate }) => {
-    io.to(targetId).emit("ice_candidate", { candidate });
+  // الأب يطلب الاستماع
+  socket.on("request_audio", ({ code, childId }) => {
+    console.log(`audio requested for child: ${childId}`);
+    io.to(childId).emit("start_audio");
   });
 
   // الأب يوقف الاستماع
   socket.on("stop_audio", ({ childId }) => {
+    console.log(`audio stopped for child: ${childId}`);
     io.to(childId).emit("stop_audio");
+  });
+
+  // الطفل يبعت chunk صوت
+  socket.on("audio_chunk", ({ code, chunk }) => {
+    const room = rooms[code];
+    if (!room || !room.parent) return;
+    console.log(`audio chunk received from child, sending to parent`);
+    io.to(room.parent).emit("audio_chunk", { childId: socket.id, chunk });
   });
 
   // ══════════ انقطاع الاتصال ══════════
