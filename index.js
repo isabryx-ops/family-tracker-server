@@ -9,6 +9,8 @@ const io = new Server(server, { cors: { origin: "*" } });
 app.get("/ping", (req, res) => res.send("ok"));
 
 const rooms = {};
+// تخزين الـ timers عشان نقدر نلغيها لو الأب رجع
+const sleepTimers = {};
 
 function getOrCreateRoom(code) {
   if (!rooms[code]) rooms[code] = { parent: null, children: {} };
@@ -18,6 +20,14 @@ function getOrCreateRoom(code) {
 function wakeAllChildren(code) {
   const room = rooms[code];
   if (!room) return;
+
+  // لو في timer نايم — الغيه
+  if (sleepTimers[code]) {
+    clearTimeout(sleepTimers[code]);
+    delete sleepTimers[code];
+    console.log(`sleep timer cancelled for room: ${code}`);
+  }
+
   Object.values(room.children).forEach(child => {
     if (child.online) {
       io.to(child.socketId).emit("wake_up");
@@ -26,15 +36,26 @@ function wakeAllChildren(code) {
   });
 }
 
-function sleepAllChildren(code) {
-  const room = rooms[code];
-  if (!room) return;
-  Object.values(room.children).forEach(child => {
-    if (child.online) {
-      io.to(child.socketId).emit("go_sleep");
-      console.log(`go_sleep sent to child: ${child.name}`);
-    }
-  });
+function scheduleSleepAllChildren(code) {
+  // لو في timer قديم — الغيه
+  if (sleepTimers[code]) {
+    clearTimeout(sleepTimers[code]);
+  }
+
+  // استنى 5 دقائق قبل النوم
+  sleepTimers[code] = setTimeout(() => {
+    const room = rooms[code];
+    if (!room || room.parent) return; // لو الأب رجع — متنامش
+    Object.values(room.children).forEach(child => {
+      if (child.online) {
+        io.to(child.socketId).emit("go_sleep");
+        console.log(`go_sleep sent to child: ${child.name} (after 5 min delay)`);
+      }
+    });
+    delete sleepTimers[code];
+  }, 5 * 60 * 1000); // 5 دقائق
+
+  console.log(`sleep scheduled in 5 min for room: ${code}`);
 }
 
 io.on("connection", (socket) => {
@@ -46,7 +67,6 @@ io.on("connection", (socket) => {
     room.parent = socket.id;
     socket.join(code);
 
-    // بعت قائمة الأطفال مع charging
     const childList = Object.values(room.children).map(c => ({
       id: c.socketId, name: c.name, location: c.location,
       battery: c.battery, online: c.online,
@@ -54,6 +74,8 @@ io.on("connection", (socket) => {
       charging: c.charging || false
     }));
     socket.emit("children_list", childList);
+
+    // صحّي الأطفال فوراً وألغي أي timer نوم
     wakeAllChildren(code);
     console.log(`parent joined room: ${code}`);
   });
@@ -79,6 +101,7 @@ io.on("connection", (socket) => {
           charging: existing.charging || false
         });
       } else {
+        // الأب مش موجود — نام فوراً (مش هينام فعلاً إلا لو مفيش timer شغال)
         io.to(socket.id).emit("go_sleep");
       }
       console.log(`child "${name}" reconnected in room: ${code}`);
@@ -117,14 +140,9 @@ io.on("connection", (socket) => {
     const room = rooms[code];
     if (!room) return;
     const child = Object.values(room.children).find(c => c.socketId === socket.id);
-    if (child) {
-      child.battery = battery;
-      child.charging = charging || false;
-    }
+    if (child) { child.battery = battery; child.charging = charging || false; }
     if (room.parent) {
-      io.to(room.parent).emit("battery_update", {
-        childId: socket.id, battery, charging: charging || false
-      });
+      io.to(room.parent).emit("battery_update", { childId: socket.id, battery, charging: charging || false });
     }
   });
 
@@ -147,12 +165,10 @@ io.on("connection", (socket) => {
   // ══════════ Wake/Sleep يدوي ══════════
   socket.on("wake_child", ({ childId }) => {
     io.to(childId).emit("wake_up");
-    console.log(`manual wake: ${childId}`);
   });
 
   socket.on("sleep_child", ({ childId }) => {
     io.to(childId).emit("go_sleep");
-    console.log(`manual sleep: ${childId}`);
   });
 
   // ══════════ إخفاء/إظهار التطبيق ══════════
@@ -179,11 +195,14 @@ io.on("connection", (socket) => {
   socket.on("disconnect", () => {
     for (const code in rooms) {
       const room = rooms[code];
+
+      // لو الأب انقطع — جدول النوم بعد 5 دقائق
       if (room.parent === socket.id) {
         room.parent = null;
-        sleepAllChildren(code);
-        console.log(`parent disconnected — children sleeping`);
+        scheduleSleepAllChildren(code); // 5 دقائق تأخير
+        console.log(`parent disconnected from room: ${code}`);
       }
+
       const child = Object.values(room.children).find(c => c.socketId === socket.id);
       if (child) {
         child.online = false;
