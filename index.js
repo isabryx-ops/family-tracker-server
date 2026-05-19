@@ -191,6 +191,15 @@ io.on("connection", (socket) => {
   // ══════════ Ping ══════════
   socket.on("ping_server", () => socket.emit("pong_server"));
 
+socket.on("unregister_parent", ({ code }) => {
+    const room = rooms[code];
+    if (room) {
+        room.parent = null;
+        scheduleSleepAllChildren(code);
+        console.log(`parent unregistered from room: ${code}`);
+    }
+});
+
   // ══════════ انقطاع الاتصال ══════════
   socket.on("disconnect", () => {
     for (const code in rooms) {
