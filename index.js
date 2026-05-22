@@ -16,20 +16,12 @@ function getOrCreateRoom(code) {
   return rooms[code];
 }
 
-function wakeAllChildren(code) {
-  const room = rooms[code];
-  if (!room) return;
+function cancelSleepTimer(code) {
   if (sleepTimers[code]) {
     clearTimeout(sleepTimers[code]);
     delete sleepTimers[code];
     console.log(`sleep timer cancelled for room: ${code}`);
   }
-  Object.values(room.children).forEach(child => {
-    if (child.online) {
-      io.to(child.socketId).emit("wake_up");
-      console.log(`wake_up sent to child: ${child.name}`);
-    }
-  });
 }
 
 function scheduleSleepAllChildren(code) {
@@ -48,16 +40,14 @@ function scheduleSleepAllChildren(code) {
   console.log(`sleep scheduled in 5 min for room: ${code}`);
 }
 
-// ══════════ Heartbeat checker — كل دقيقة ══════════
+// ══════════ Heartbeat checker ══════════
 setInterval(() => {
   const now = Date.now();
   for (const code in rooms) {
     const room = rooms[code];
     if (room.parent && room.lastHeartbeat) {
-      const diff = now - room.lastHeartbeat;
-      // لو الأب مبعتش heartbeat منذ دقيقتين — اعتبره انقطع
-      if (diff > 2 * 60 * 1000) {
-        console.log(`heartbeat timeout for room: ${code} — scheduling sleep`);
+      if (now - room.lastHeartbeat > 2 * 60 * 1000) {
+        console.log(`heartbeat timeout for room: ${code}`);
         room.parent = null;
         room.lastHeartbeat = null;
         scheduleSleepAllChildren(code);
@@ -83,11 +73,11 @@ io.on("connection", (socket) => {
       charging: c.charging || false
     }));
     socket.emit("children_list", childList);
-    wakeAllChildren(code);
+    cancelSleepTimer(code);
     console.log(`parent joined room: ${code}`);
   });
 
-  // ══════════ Heartbeat من الأب ══════════
+  // ══════════ Heartbeat ══════════
   socket.on("heartbeat", ({ code }) => {
     const room = rooms[code];
     if (room && room.parent === socket.id) {
@@ -106,16 +96,14 @@ io.on("connection", (socket) => {
       existing.charging = charging || false;
       socket.join(code);
       if (existing.appHidden) io.to(socket.id).emit("hide_app");
+      io.to(socket.id).emit("go_sleep");
       if (room.parent) {
-        io.to(socket.id).emit("wake_up");
         io.to(room.parent).emit("child_updated", {
           id: socket.id, name: existing.name, location: existing.location,
           battery: existing.battery, online: true,
           appHidden: existing.appHidden || false,
           charging: existing.charging || false
         });
-      } else {
-        io.to(socket.id).emit("go_sleep");
       }
       console.log(`child "${name}" reconnected in room: ${code}`);
     } else {
@@ -125,14 +113,12 @@ io.on("connection", (socket) => {
         appHidden: false, charging: charging || false
       };
       socket.join(code);
+      io.to(socket.id).emit("go_sleep");
       if (room.parent) {
-        io.to(socket.id).emit("wake_up");
         io.to(room.parent).emit("child_connected", {
           id: socket.id, name, battery: battery || null,
           online: true, appHidden: false, charging: charging || false
         });
-      } else {
-        io.to(socket.id).emit("go_sleep");
       }
       console.log(`child "${name}" joined room: ${code}`);
     }
@@ -175,8 +161,20 @@ io.on("connection", (socket) => {
   });
 
   // ══════════ Wake/Sleep يدوي ══════════
-  socket.on("wake_child", ({ childId }) => io.to(childId).emit("wake_up"));
-  socket.on("sleep_child", ({ childId }) => io.to(childId).emit("go_sleep"));
+  socket.on("wake_child", ({ childId }) => {
+    io.to(childId).emit("wake_up");
+    console.log(`wake_up sent to child: ${childId}`);
+  });
+
+  socket.on("sleep_child", ({ childId }) => {
+    io.to(childId).emit("go_sleep");
+  });
+
+  // ══════════ Location مرة واحدة ══════════
+  socket.on("get_location", ({ childId }) => {
+    io.to(childId).emit("get_location");
+    console.log(`get_location sent to child: ${childId}`);
+  });
 
   // ══════════ إخفاء/إظهار التطبيق ══════════
   socket.on("hide_child_app", ({ childId }) => {
