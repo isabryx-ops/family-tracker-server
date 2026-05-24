@@ -11,6 +11,11 @@ app.get("/ping", (req, res) => res.send("ok"));
 const rooms = {};
 const sleepTimers = {};
 
+// ══════════ Grace period — مهلة قبل اعتبار الطفل offline ══════════
+// تمنع الرمشة online/offline لما الـ ESP في وضع polling
+const OFFLINE_GRACE_MS = 10000; // 10 ثواني
+const offlineTimers = {};       // مفتاح: code::childName
+
 function getOrCreateRoom(code) {
   if (!rooms[code]) rooms[code] = { parent: null, children: {}, lastHeartbeat: null };
   return rooms[code];
@@ -88,8 +93,18 @@ io.on("connection", (socket) => {
   // ══════════ تسجيل الطفل ══════════
   socket.on("register_child", ({ code, name, battery, charging }) => {
     const room = getOrCreateRoom(code);
+
+    // ألغِ أي مؤقت offline معلّق لهذا الطفل — رجع قبل ما تخلص المهلة
+    const timerKey = `${code}::${name}`;
+    if (offlineTimers[timerKey]) {
+      clearTimeout(offlineTimers[timerKey]);
+      delete offlineTimers[timerKey];
+      console.log(`offline grace cancelled — "${name}" came back`);
+    }
+
     const existing = room.children[name];
     if (existing) {
+      const wasOffline = !existing.online;
       existing.socketId = socket.id;
       existing.online = true;
       existing.battery = battery || existing.battery;
@@ -97,7 +112,16 @@ io.on("connection", (socket) => {
       socket.join(code);
       if (existing.appHidden) io.to(socket.id).emit("hide_app");
       io.to(socket.id).emit("go_sleep");
-      if (room.parent) {
+      // أبلغ الأب فقط لو كان فعلاً offline قبل كده (تجنّب رسائل زيادة)
+      if (room.parent && wasOffline) {
+        io.to(room.parent).emit("child_updated", {
+          id: socket.id, name: existing.name, location: existing.location,
+          battery: existing.battery, online: true,
+          appHidden: existing.appHidden || false,
+          charging: existing.charging || false
+        });
+      } else if (room.parent) {
+        // تحديث صامت — نفس البيانات بدون تغيير حالة
         io.to(room.parent).emit("child_updated", {
           id: socket.id, name: existing.name, location: existing.location,
           battery: existing.battery, online: true,
@@ -219,9 +243,29 @@ io.on("connection", (socket) => {
       }
       const child = Object.values(room.children).find(c => c.socketId === socket.id);
       if (child) {
-        child.online = false;
-        if (room.parent) io.to(room.parent).emit("child_offline", { id: socket.id, name: child.name });
-        console.log(`child "${child.name}" went offline`);
+        const childName = child.name;
+        const roomCode = code;
+        const timerKey = `${roomCode}::${childName}`;
+
+        // ══════════ Grace period — لا تقل offline فوراً ══════════
+        // الـ ESP في وضع polling بيقطع وبيرجع كل ثانيتين — استنى 10 ثواني
+        if (offlineTimers[timerKey]) clearTimeout(offlineTimers[timerKey]);
+        offlineTimers[timerKey] = setTimeout(() => {
+          const r = rooms[roomCode];
+          if (!r) { delete offlineTimers[timerKey]; return; }
+          const c = r.children[childName];
+          // لو الطفل لسه على نفس الـ socket المقطوع — يبقى فعلاً offline
+          if (c && c.socketId === socket.id) {
+            c.online = false;
+            if (r.parent) {
+              io.to(r.parent).emit("child_offline", { id: socket.id, name: childName });
+            }
+            console.log(`child "${childName}" confirmed offline (grace expired)`);
+          }
+          delete offlineTimers[timerKey];
+        }, OFFLINE_GRACE_MS);
+
+        console.log(`child "${childName}" disconnected — grace period started (10s)`);
       }
     }
   });
