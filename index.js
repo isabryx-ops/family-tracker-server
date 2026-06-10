@@ -10,7 +10,19 @@ const io = new Server(server, { cors: { origin: "*" } });
 // ══════════ Binary WebSocket server للصوت من الـ ESP ══════════
 // الـ ESP بيبعت صوت خام (binary) بدون base64/JSON — توفير ضخم في معالجة الـ ESP
 // أول رسالة من الـ ESP لازم تكون نصية: "CODE:childSocketId" أو "REG:code:name"
-const wss = new WebSocket.Server({ server, path: "/esp-audio" });
+// ⚡ noServer: true — نتعامل مع الـ upgrade يدوياً عشان مانتعارضش مع Socket.IO
+const wss = new WebSocket.Server({ noServer: true });
+
+// نوجّه فقط طلبات /esp-audio للـ ws — الباقي يسيبه لـ Socket.IO
+server.on("upgrade", (request, socket, head) => {
+  const { url } = request;
+  if (url && url.startsWith("/esp-audio")) {
+    wss.handleUpgrade(request, socket, head, (espWs) => {
+      wss.emit("connection", espWs, request);
+    });
+  }
+  // مهم: مانعملش socket.destroy() للباقي — Socket.IO بيتعامل معاه لوحده
+});
 
 // خريطة: roomCode -> espSocket (عشان نبعت أوامر start/stop للـ ESP)
 const espSockets = {};
