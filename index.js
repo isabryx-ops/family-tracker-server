@@ -318,6 +318,27 @@ io.on("connection", (socket) => {
     io.to(room.parent).emit("audio_chunk", { childId: socket.id, chunk });
   });
 
+  // ══════════ صوت binary عبر Socket.IO — التحويل لـ base64 على السيرفر ══════════
+  // الـ ESP بيبعت: emit("audio_bin", <Buffer خام>) — أول argument هو الكود كـ string
+  // بنستقبل الـ binary ونحوّله base64 (على السيرفر القوي) ونبعته للأب بنفس صيغة audio_chunk
+  socket.on("audio_bin", (codeBuf, audioBuf) => {
+    // codeBuf ممكن يكون string (الكود) و audioBuf هو الـ binary
+    let code, chunk;
+    if (audioBuf === undefined) {
+      // حالة: بعت الـ binary بس — نستخدم آخر كود مسجّل للـ socket
+      code = socket.espCode;
+      chunk = Buffer.from(codeBuf).toString("base64");
+    } else {
+      code = (typeof codeBuf === "string") ? codeBuf : Buffer.from(codeBuf).toString();
+      socket.espCode = code;
+      chunk = Buffer.from(audioBuf).toString("base64");
+    }
+    const room = rooms[code];
+    if (!room) { console.log(`[audio_bin] no room for code=${code}`); return; }
+    if (!room.parent) { console.log(`[audio_bin] no parent in room=${code}`); return; }
+    io.to(room.parent).emit("audio_chunk", { childId: socket.id, chunk });
+  });
+
   // ══════════ Wake/Sleep يدوي ══════════
   socket.on("wake_child", ({ childId }) => {
     io.to(childId).emit("wake_up");
