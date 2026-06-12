@@ -25,12 +25,14 @@ server.on("upgrade", (request, socket, head) => {
 });
 
 // خريطة: roomCode -> espSocket (عشان نبعت أوامر start/stop للـ ESP)
+// خريطة: fakeId (esp_room_name) -> espSocket
 const espSockets = {};
 
 wss.on("connection", (espSocket) => {
   console.log("[ESP-AUDIO] ESP connected via binary WS");
   let espRoomCode = null;
-  let espName = "ESP-S3";
+  let espName = "ESP";
+  let myFakeId = null;   // معرّف فريد لهذا الـ ESP
 
   espSocket.on("message", (data, isBinary) => {
     if (!isBinary) {
@@ -40,57 +42,55 @@ wss.on("connection", (espSocket) => {
       if (text.startsWith("REG:")) {
         const parts = text.split(":");
         espRoomCode = parts[1];
-        espName = parts[2] || "ESP-S3";
-        espSockets[espRoomCode] = espSocket;
+        espName = parts[2] || "ESP";
+        // ⚡ معرّف فريد لكل ESP = room + name (مش الغرفة بس)
+        myFakeId = "esp_" + espRoomCode + "_" + espName;
+        espSockets[myFakeId] = espSocket;
 
-        // سجّل الـ ESP كطفل في الغرفة
         const room = getOrCreateRoom(espRoomCode);
-        const fakeId = "esp_" + espRoomCode;
         if (!room.children[espName]) {
           room.children[espName] = {
-            socketId: fakeId, name: espName, location: null,
+            socketId: myFakeId, name: espName, location: null,
             battery: 100, online: true, appHidden: false, charging: true,
             isEsp: true
           };
         } else {
           room.children[espName].online = true;
-          room.children[espName].socketId = fakeId;
+          room.children[espName].socketId = myFakeId;
         }
 
-        // ألغِ أي مؤقت offline
         const timerKey = `${espRoomCode}::${espName}`;
         if (offlineTimers[timerKey]) {
           clearTimeout(offlineTimers[timerKey]);
           delete offlineTimers[timerKey];
         }
 
-        // أبلغ الأب
         if (room.parent) {
           io.to(room.parent).emit("child_connected", {
-            id: fakeId, name: espName, battery: 100,
+            id: myFakeId, name: espName, battery: 100,
             online: true, appHidden: false, charging: true
           });
         }
-        console.log(`[ESP-AUDIO] registered "${espName}" in room ${espRoomCode}`);
+        console.log(`[ESP-AUDIO] registered "${espName}" as ${myFakeId}`);
       }
       return;
     }
 
     // binary = صوت خام
-    if (!espRoomCode) return;
+    if (!espRoomCode || !myFakeId) return;
     const room = rooms[espRoomCode];
     if (!room || !room.parent) return;
 
     io.to(room.parent).emit("audio_chunk", {
-      childId: "esp_" + espRoomCode,
+      childId: myFakeId,
       chunk: Buffer.from(data).toString("base64")
     });
   });
 
   espSocket.on("close", () => {
-    console.log(`[ESP-AUDIO] ESP disconnected (room=${espRoomCode})`);
-    if (espRoomCode) {
-      delete espSockets[espRoomCode];
+    console.log(`[ESP-AUDIO] ESP disconnected (${myFakeId})`);
+    if (myFakeId) {
+      delete espSockets[myFakeId];
       const room = rooms[espRoomCode];
       if (room && room.children[espName]) {
         const timerKey = `${espRoomCode}::${espName}`;
@@ -101,7 +101,7 @@ wss.on("connection", (espSocket) => {
             r.children[espName].online = false;
             if (r.parent) {
               io.to(r.parent).emit("child_offline", {
-                id: "esp_" + espRoomCode, name: espName
+                id: myFakeId, name: espName
               });
             }
           }
@@ -116,9 +116,9 @@ wss.on("connection", (espSocket) => {
   });
 });
 
-// دالة مساعدة: ابعت أمر نصي للـ ESP لو متصل
-function sendToEsp(roomCode, command) {
-  const espSocket = espSockets[roomCode];
+// دالة مساعدة: ابعت أمر نصي لـ ESP محدد بالـ fakeId
+function sendToEsp(fakeId, command) {
+  const espSocket = espSockets[fakeId];
   if (espSocket && espSocket.readyState === WebSocket.OPEN) {
     espSocket.send(command);
     return true;
@@ -290,11 +290,10 @@ io.on("connection", (socket) => {
 
   // ══════════ الصوت ══════════
   socket.on("request_audio", ({ code, childId }) => {
-    // لو الطفل ESP — ابعت الأمر عبر الـ binary WS
+    // لو الطفل ESP — ابعت الأمر عبر الـ binary WS بالـ fakeId الكامل
     if (childId && childId.startsWith("esp_")) {
-      const roomCode = childId.substring(4);
-      if (sendToEsp(roomCode, "start_audio")) {
-        console.log(`[ESP-AUDIO] start_audio sent to room ${roomCode}`);
+      if (sendToEsp(childId, "start_audio")) {
+        console.log(`[ESP-AUDIO] start_audio sent to ${childId}`);
       }
       return;
     }
@@ -304,9 +303,8 @@ io.on("connection", (socket) => {
 
   socket.on("stop_audio", ({ childId }) => {
     if (childId && childId.startsWith("esp_")) {
-      const roomCode = childId.substring(4);
-      sendToEsp(roomCode, "stop_audio");
-      console.log(`[ESP-AUDIO] stop_audio sent to room ${roomCode}`);
+      sendToEsp(childId, "stop_audio");
+      console.log(`[ESP-AUDIO] stop_audio sent to ${childId}`);
       return;
     }
     io.to(childId).emit("stop_audio");
