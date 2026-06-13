@@ -404,6 +404,23 @@ io.on("connection", (socket) => {
     console.log(`children reordered in room ${code}`);
   });
 
+  // ══════════ DSP — تغيير gain لـ ESP معيّن ══════════
+  socket.on("esp_set_gain", ({ code, childId, gain }) => {
+    if (!childId || gain == null) return;
+    // ابعت الأمر للـ ESP المحدد عبر الـ binary WS
+    if (sendToEsp(childId, "SET_GAIN:" + gain)) {
+      console.log(`[ESP-AUDIO] SET_GAIN:${gain} sent to ${childId}`);
+    }
+  });
+
+  // ══════════ DSP — تغيير sample rate لـ ESP معيّن ══════════
+  socket.on("esp_set_rate", ({ code, childId, rate }) => {
+    if (!childId || rate == null) return;
+    if (sendToEsp(childId, "SET_RATE:" + rate)) {
+      console.log(`[ESP-AUDIO] SET_RATE:${rate} sent to ${childId}`);
+    }
+  });
+
   // ══════════ إخفاء/إظهار التطبيق ══════════
   socket.on("hide_child_app", ({ childId }) => {
     for (const code in rooms) {
