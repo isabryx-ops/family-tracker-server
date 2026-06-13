@@ -353,6 +353,57 @@ io.on("connection", (socket) => {
     console.log(`get_location sent to child: ${childId}`);
   });
 
+  // ══════════ مسح جهاز ══════════
+  socket.on("remove_child", ({ code, childId }) => {
+    const room = rooms[code];
+    if (!room) return;
+    // دوّر على الطفل بالـ id وامسحه
+    const entry = Object.entries(room.children).find(([n, c]) => c.socketId === childId);
+    if (entry) {
+      const [name, child] = entry;
+      // لو ESP — اقفل اتصاله
+      if (childId.startsWith("esp_") && espSockets[childId]) {
+        try { espSockets[childId].close(); } catch (e) {}
+        delete espSockets[childId];
+      }
+      delete room.children[name];
+      const timerKey = `${code}::${name}`;
+      if (offlineTimers[timerKey]) { clearTimeout(offlineTimers[timerKey]); delete offlineTimers[timerKey]; }
+      if (room.parent) io.to(room.parent).emit("child_removed", { id: childId, name });
+      console.log(`child "${name}" removed from room ${code}`);
+    }
+  });
+
+  // ══════════ إعادة تسمية جهاز ══════════
+  socket.on("rename_child", ({ code, childId, newName }) => {
+    const room = rooms[code];
+    if (!room || !newName) return;
+    const entry = Object.entries(room.children).find(([n, c]) => c.socketId === childId);
+    if (entry) {
+      const [oldName, child] = entry;
+      if (oldName === newName) return;
+      // انقل الطفل للاسم الجديد
+      child.name = newName;
+      child.displayName = newName;
+      room.children[newName] = child;
+      delete room.children[oldName];
+      // انقل أي مؤقت offline
+      const oldKey = `${code}::${oldName}`;
+      if (offlineTimers[oldKey]) { clearTimeout(offlineTimers[oldKey]); delete offlineTimers[oldKey]; }
+      if (room.parent) io.to(room.parent).emit("child_renamed", { id: childId, oldName, newName });
+      console.log(`child "${oldName}" renamed to "${newName}" in room ${code}`);
+    }
+  });
+
+  // ══════════ ترتيب الأجهزة ══════════
+  socket.on("reorder_children", ({ code, order }) => {
+    const room = rooms[code];
+    if (!room || !Array.isArray(order)) return;
+    // خزّن الترتيب على مستوى الغرفة
+    room.childOrder = order;
+    console.log(`children reordered in room ${code}`);
+  });
+
   // ══════════ إخفاء/إظهار التطبيق ══════════
   socket.on("hide_child_app", ({ childId }) => {
     for (const code in rooms) {
