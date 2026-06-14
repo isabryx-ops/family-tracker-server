@@ -90,6 +90,11 @@ wss.on("connection", (espSocket) => {
   espSocket.on("close", () => {
     console.log(`[ESP-AUDIO] ESP disconnected (${myFakeId})`);
     if (myFakeId) {
+      // ⚡ لو فيه socket أحدث بنفس الـ id اتسجّل، متعملش حاجة (ده socket قديم)
+      if (espSockets[myFakeId] && espSockets[myFakeId] !== espSocket) {
+        console.log(`[ESP-AUDIO] stale close ignored for ${myFakeId}`);
+        return;
+      }
       delete espSockets[myFakeId];
       const room = rooms[espRoomCode];
       if (room && room.children[espName]) {
@@ -97,7 +102,8 @@ wss.on("connection", (espSocket) => {
         if (offlineTimers[timerKey]) clearTimeout(offlineTimers[timerKey]);
         offlineTimers[timerKey] = setTimeout(() => {
           const r = rooms[espRoomCode];
-          if (r && r.children[espName]) {
+          // ⚡ تأكد إن مفيش socket جديد اتصل في الفترة دي
+          if (r && r.children[espName] && !espSockets[myFakeId]) {
             r.children[espName].online = false;
             if (r.parent) {
               io.to(r.parent).emit("child_offline", {
@@ -133,7 +139,7 @@ const sleepTimers = {};
 
 // ══════════ Grace period — مهلة قبل اعتبار الطفل offline ══════════
 // تمنع الرمشة online/offline لما الـ ESP في وضع polling
-const OFFLINE_GRACE_MS = 10000; // 10 ثواني
+const OFFLINE_GRACE_MS = 20000; // 20 ثانية — يدّي الـ ESP وقت يعمل reconnect
 const offlineTimers = {};       // مفتاح: code::childName
 
 function getOrCreateRoom(code) {
