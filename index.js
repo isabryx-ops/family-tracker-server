@@ -427,6 +427,14 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ══════════ DSP — تغيير noise gate لـ ESP معيّن ══════════
+  socket.on("esp_set_gate", ({ code, childId, gate }) => {
+    if (!childId || gate == null) return;
+    if (sendToEsp(childId, "SET_GATE:" + gate)) {
+      console.log(`[ESP-AUDIO] SET_GATE:${gate} sent to ${childId}`);
+    }
+  });
+
   // ══════════ إخفاء/إظهار التطبيق ══════════
   socket.on("hide_child_app", ({ childId }) => {
     for (const code in rooms) {
