@@ -445,6 +445,17 @@ io.on("connection", (socket) => {
     }
   });
 
+  // ══════════ Audio Mode — ADPCM مضغوط أو PCM عادي ══════════
+  socket.on("esp_set_mode", ({ code, childId, mode }) => {
+    if (!childId || mode == null) return;
+    if (sendToEsp(childId, "SET_MODE:" + mode)) {
+      console.log(`[ESP-AUDIO] SET_MODE:${mode} sent to ${childId}`);
+    } else {
+      io.to(childId).emit("set_mode", { mode });
+      console.log(`[Socket.IO] set_mode:${mode} sent to ${childId}`);
+    }
+  });
+
   // ══════════ إخفاء/إظهار التطبيق ══════════
   socket.on("hide_child_app", ({ childId }) => {
     for (const code in rooms) {
