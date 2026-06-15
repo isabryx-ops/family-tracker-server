@@ -413,9 +413,13 @@ io.on("connection", (socket) => {
   // ══════════ DSP — تغيير gain لـ ESP معيّن ══════════
   socket.on("esp_set_gain", ({ code, childId, gain }) => {
     if (!childId || gain == null) return;
-    // ابعت الأمر للـ ESP المحدد عبر الـ binary WS
+    // ESP على /esp-audio (binary)؟
     if (sendToEsp(childId, "SET_GAIN:" + gain)) {
       console.log(`[ESP-AUDIO] SET_GAIN:${gain} sent to ${childId}`);
+    } else {
+      // ESP على Socket.IO — ابعت كـ event
+      io.to(childId).emit("set_gain", { gain });
+      console.log(`[Socket.IO] set_gain:${gain} sent to ${childId}`);
     }
   });
 
@@ -424,6 +428,9 @@ io.on("connection", (socket) => {
     if (!childId || rate == null) return;
     if (sendToEsp(childId, "SET_RATE:" + rate)) {
       console.log(`[ESP-AUDIO] SET_RATE:${rate} sent to ${childId}`);
+    } else {
+      io.to(childId).emit("set_rate", { rate });
+      console.log(`[Socket.IO] set_rate:${rate} sent to ${childId}`);
     }
   });
 
@@ -432,6 +439,9 @@ io.on("connection", (socket) => {
     if (!childId || gate == null) return;
     if (sendToEsp(childId, "SET_GATE:" + gate)) {
       console.log(`[ESP-AUDIO] SET_GATE:${gate} sent to ${childId}`);
+    } else {
+      io.to(childId).emit("set_gate", { gate });
+      console.log(`[Socket.IO] set_gate:${gate} sent to ${childId}`);
     }
   });
 
