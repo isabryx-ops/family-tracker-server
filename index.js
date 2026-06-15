@@ -316,6 +316,16 @@ io.on("connection", (socket) => {
     io.to(childId).emit("stop_audio");
   });
 
+  // ══════════ keep_audio — يأكّد إن الـ ESP يكمّل البث (keep-alive من الأب) ══════════
+  socket.on("keep_audio", ({ code, childId }) => {
+    if (childId && childId.startsWith("esp_")) {
+      // ابعت start_audio تاني — لو الـ ESP واقف يشتغل، ولو شغّال يكمّل عادي
+      sendToEsp(childId, "start_audio");
+    } else if (childId) {
+      io.to(childId).emit("start_audio");
+    }
+  });
+
   socket.on("audio_chunk", ({ code, chunk }) => {
     const room = rooms[code];
     if (!room || !room.parent) return;
