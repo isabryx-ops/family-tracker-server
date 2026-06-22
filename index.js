@@ -363,6 +363,12 @@ io.on("connection", (socket) => {
     io.to(childId).emit("go_sleep");
   });
 
+  // ⚡ set_notif — الأب يبعت عنوان/نص للنوتيفيكيشن، السيرفر يمرّره للطفل
+  socket.on("set_notif", ({ childId, title, body }) => {
+    io.to(childId).emit("set_notif", { title, body });
+    console.log(`set_notif sent to child: ${childId}`);
+  });
+
   // ══════════ Location مرة واحدة ══════════
   socket.on("get_location", ({ childId }) => {
     io.to(childId).emit("get_location");
