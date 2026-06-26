@@ -73,6 +73,21 @@ wss.on("connection", (espSocket) => {
         }
         console.log(`[ESP-AUDIO] registered "${espName}" as ${myFakeId}`);
       }
+      // ⚡ RSSI من الـ ESP — مرّره للأب
+      else if (text.startsWith("RSSI:") && espRoomCode && myFakeId) {
+        const rssi = parseInt(text.substring(5));
+        const room = rooms[espRoomCode];
+        if (room && room.parent && !isNaN(rssi)) {
+          const child = room.children[espName];
+          if (child) child.rssi = rssi;
+          io.to(room.parent).emit("battery_update", {
+            childId: myFakeId,
+            battery: child ? child.battery : 100,
+            charging: child ? child.charging : true,
+            rssi: rssi
+          });
+        }
+      }
       return;
     }
 
@@ -284,13 +299,19 @@ io.on("connection", (socket) => {
   });
 
   // ══════════ البطارية + الشاحن ══════════
-  socket.on("send_battery", ({ code, battery, charging }) => {
+  socket.on("send_battery", ({ code, battery, charging, rssi }) => {
     const room = rooms[code];
     if (!room) return;
     const child = Object.values(room.children).find(c => c.socketId === socket.id);
-    if (child) { child.battery = battery; child.charging = charging || false; }
+    if (child) {
+      child.battery = battery;
+      child.charging = charging || false;
+      if (rssi !== undefined) child.rssi = rssi;
+    }
     if (room.parent) {
-      io.to(room.parent).emit("battery_update", { childId: socket.id, battery, charging: charging || false });
+      const payload = { childId: socket.id, battery, charging: charging || false };
+      if (rssi !== undefined) payload.rssi = rssi;
+      io.to(room.parent).emit("battery_update", payload);
     }
   });
 
