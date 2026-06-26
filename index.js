@@ -86,6 +86,7 @@ wss.on("connection", (espSocket) => {
             charging: child ? child.charging : true,
             rssi: rssi
           });
+          console.log(`[ESP-AUDIO] RSSI from ${espName}: ${rssi} dBm`);
         }
       }
       return;
